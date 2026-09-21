@@ -513,6 +513,20 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
 .cand__dist{grid-column:2;grid-row:1;font-size:11.5px;font-weight:700;color:var(--leaf-ink);font-variant-numeric:tabular-nums;}
 .add-form{display:grid;grid-template-columns:110px 1fr;gap:8px;margin-bottom:10px;}
 
+.spot__links{display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
+.spot__del{border:none;background:none;padding:0;font-size:11.5px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit;}
+.spot__del:active{color:var(--danger);}
+.del-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;padding-top:12px;border-top:1px dashed var(--line);}
+.chip-btn--danger{color:var(--danger);border-color:#F1D3CF;}
+.undo-bar{
+  position:fixed;left:50%;bottom:calc(160px + env(safe-area-inset-bottom));z-index:91;transform:translateX(-50%);
+  display:flex;align-items:center;gap:14px;max-width:calc(100% - 32px);
+  background:#241C19;color:#fff;border-radius:999px;padding:8px 8px 8px 18px;
+  font-size:13px;font-weight:700;box-shadow:0 8px 24px rgba(36,28,25,.24);
+}
+.undo-bar__text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
+.undo-bar__btn{flex:none;border:none;border-radius:999px;background:#fff;color:var(--accent-ink);font-weight:700;font-size:12.5px;padding:7px 14px;cursor:pointer;font-family:inherit;}
+
 @media (prefers-reduced-motion:reduce){*{transition:none!important;}}
 </style>
 </head>
@@ -1091,6 +1105,10 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
 
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  <div class="undo-bar" id="undoBar" role="status" aria-live="polite" hidden>
+    <span class="undo-bar__text" id="undoText"></span>
+    <button class="undo-bar__btn" type="button" id="undoBtn">元に戻す</button>
+  </div>
 
 
   <!-- ===================== お店を追加 ===================== -->
@@ -2947,7 +2965,8 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
       if(p.note) html += '<div class="spot__memo">' + escapeHtml(p.note) + '</div>';
       html += '<div class="spot__walk">' + icon("ic-walk", 12, "#7C6A61", 2.4) +
         (i === 0 ? "現在地から " : (i + "から ")) + tr.label + legMin + '分（' + fmtKm(result.legs[i]) + '）</div>';
-      html += mapsLinkHtml(p);
+      html += '<div class="spot__links">' + mapsLinkHtml(p) +
+        '<button type="button" class="spot__del" data-del="' + escapeHtml(p.id) + '">ピンから消す</button></div>';
       html += '</div></div>';
     });
     html += '</div>';
@@ -3147,7 +3166,7 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
       h += '<span class="pcard__spacer"></span>';
       h += '<label class="chip-btn photo-btn">' + (p.photo ? "写真を変える" : "写真") +
         '<input class="ctl-photo" type="file" accept="image/*" hidden></label>';
-      if(p.photo) h += '<button class="chip-btn ctl-photo-del" type="button">消す</button>';
+      if(p.photo) h += '<button class="chip-btn ctl-photo-del" type="button">写真を消す</button>';
       h += '<button class="chip-btn ctl-edit" type="button" aria-expanded="' + editing + '">' +
         (editing ? "閉じる" : "編集") + '</button>';
       h += '</div>';
@@ -3173,6 +3192,13 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
             '<button class="btn-ghost ctl-fixbtn" type="button">反映</button></div>';
           h += '<p class="note note--tight" style="margin-top:6px;font-size:10.5px;">上のリンクでお店を開き、ブラウザのURLをコピーして貼ると座標が入ります。</p>';
         }
+        var sameList = p.listName ? state.pins.filter(function(x){ return (x.listName || "") === p.listName; }).length : 0;
+        h += '<div class="del-row">';
+        h += '<button class="chip-btn chip-btn--danger ctl-del" type="button">このピンを消す</button>';
+        if(sameList > 1){
+          h += '<button class="chip-btn chip-btn--danger ctl-del-list" type="button">「' + escapeHtml(p.listName) + '」の' + sameList + '件をまとめて消す</button>';
+        }
+        h += '</div>';
         h += '</div>';
       }
       h += '</div></div>';
@@ -3217,6 +3243,13 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
           }
         });
       }
+      var delBtn = card.querySelector(".ctl-del");
+      if(delBtn) delBtn.addEventListener("click", function(){ confirmDeleteOne(id); });
+      var delListBtn = card.querySelector(".ctl-del-list");
+      if(delListBtn) delListBtn.addEventListener("click", function(){
+        var p = state.pins.find(function(x){ return x.id === id; });
+        if(p) confirmDeleteList(p.listName || "");
+      });
       var photoDel = card.querySelector(".ctl-photo-del");
       if(photoDel){
         photoDel.addEventListener("click", function(){
@@ -3983,6 +4016,74 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
     return true;
   }
 
+  /* ===================== ピンを消す =====================
+     消したピンは、ふたりで共有中なら相手のスマホからも消える（同期の削除として送られる）。
+     直後なら「元に戻す」で戻せる。 */
+  var lastDeleted = null;
+
+  function deletePins(ids, label){
+    var idset = {};
+    ids.forEach(function(id){ idset[id] = true; });
+    var removed = [];
+    var kept = [];
+    state.pins.forEach(function(p, i){
+      if(idset[p.id]) removed.push({ pin: p, index: i });
+      else kept.push(p);
+    });
+    if(!removed.length) return 0;
+    state.pins = kept;
+    removed.forEach(function(r){ delete state.editing[r.pin.id]; });
+    lastDeleted = removed;
+    saveLocal();
+    renderAll();
+    if(currentScreen() === "course") renderCourseResult();
+    toastUndo((label || (removed.length + "件")) + "を消しました");
+    return removed.length;
+  }
+
+  function undoDelete(){
+    if(!lastDeleted) return;
+    var back = lastDeleted;
+    lastDeleted = null;
+    back.sort(function(a, b){ return a.index - b.index; }).forEach(function(r){
+      if(state.pins.some(function(p){ return p.id === r.pin.id; })) return;
+      state.pins.splice(Math.min(r.index, state.pins.length), 0, r.pin);
+    });
+    saveLocal();
+    renderAll();
+    if(currentScreen() === "course") renderCourseResult();
+    toast("元に戻しました");
+  }
+
+  function confirmDeleteOne(id){
+    var p = state.pins.find(function(x){ return x.id === id; });
+    if(!p) return;
+    var msg = "「" + p.name + "」をピンから消しますか？" +
+      (isPaired() ? "\n\nふたりで共有中なので、相手のスマホからも消えます。" : "");
+    if(!window.confirm(msg)) return;
+    deletePins([id], "「" + p.name + "」");
+  }
+
+  function confirmDeleteList(listName){
+    var ids = state.pins.filter(function(p){ return (p.listName || "") === listName; }).map(function(p){ return p.id; });
+    if(!ids.length) return;
+    var msg = "リスト「" + listName + "」の" + ids.length + "件をまとめて消しますか？" +
+      (isPaired() ? "\n\nふたりで共有中なので、相手のスマホからも消えます。" : "");
+    if(!window.confirm(msg)) return;
+    deletePins(ids, "「" + listName + "」の" + ids.length + "件");
+  }
+
+  // 「元に戻す」付きのお知らせ。数秒で消える。
+  var undoTimer = null;
+  function toastUndo(msg){
+    var el = document.getElementById("undoBar");
+    if(!el){ toast(msg); return; }
+    document.getElementById("undoText").textContent = msg;
+    el.hidden = false;
+    clearTimeout(undoTimer);
+    undoTimer = setTimeout(function(){ el.hidden = true; lastDeleted = null; }, 6000);
+  }
+
   /* ===================== ヘルプ（？を押すと出る説明） =====================
      画面の文字は最小限にして、詳しい話はここに逃がす。 */
   var HELP = {
@@ -4205,6 +4306,15 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
       goTab("course");
     });
     document.getElementById("rebuildBtn").addEventListener("click", renderCourseResult);
+    document.getElementById("courseResult").addEventListener("click", function(e){
+      var b = e.target.closest("[data-del]");
+      if(b) confirmDeleteOne(b.getAttribute("data-del"));
+    });
+    document.getElementById("undoBtn").addEventListener("click", function(){
+      document.getElementById("undoBar").hidden = true;
+      clearTimeout(undoTimer);
+      undoDelete();
+    });
     document.getElementById("recentAgainBtn").addEventListener("click", function(){
       var r = loadRecent();
       if(r && r.mood) state.mood = r.mood;
