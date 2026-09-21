@@ -1,4 +1,4 @@
-# みちくさ（Web公開版）
+# みちくさ（Web公開版★）
 
 ```
 michikusa-web/
