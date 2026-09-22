@@ -29,6 +29,10 @@ async function searchOne(query, apiKey, bias, detail) {
         radius: Math.min(Math.max((bias.radiusKm || 30) * 1000, 1), 50000),
       },
     };
+  } else {
+    body.locationRestriction = {
+      rectangle: { low: { latitude: 24.0, longitude: 122.8 }, high: { latitude: 45.8, longitude: 146.0 } },
+    };
   }
 
   const res = await fetch(ENDPOINT, {
@@ -102,6 +106,24 @@ module.exports = async function handler(req, res) {
       payload = null;
     }
   }
+  // 住所だけ（Place Details Essentials。月1万件まで無料）
+  if (payload && Array.isArray(payload.details)) {
+    const ids = payload.details.filter((s) => typeof s === "string" && /^[A-Za-z0-9_-]{5,300}$/.test(s)).slice(0, 30);
+    const addresses = {};
+    await Promise.all(ids.map(async (id) => {
+      try {
+        const r = await fetch("https://places.googleapis.com/v1/places/" + encodeURIComponent(id) + "?languageCode=ja", {
+          headers: { "X-Goog-Api-Key": apiKey, "X-Goog-FieldMask": "shortFormattedAddress,formattedAddress" },
+        });
+        if (!r.ok) return;
+        const d = await r.json();
+        addresses[id] = d.shortFormattedAddress || d.formattedAddress || "";
+      } catch (e) { /* 取れなければ空のまま */ }
+    }));
+    res.status(200).json({ addresses });
+    return;
+  }
+
   const queries = payload && Array.isArray(payload.queries) ? payload.queries : null;
   if (!queries || !queries.length) {
     res.status(400).json({ error: "queries（店名の配列）が必要です。" });

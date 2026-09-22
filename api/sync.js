@@ -97,7 +97,7 @@ function cleanPin(p) {
     url: /^https?:\/\//i.test(p.url || "") ? String(p.url).slice(0, 500) : "",
     listName: String(p.listName == null ? "" : p.listName).slice(0, 100),
     needsCheck: !!p.needsCheck,
-    checkLevel: p.checkLevel === "strong" || p.checkLevel === "weak" ? p.checkLevel : "",
+    checkLevel: p.checkLevel === "strong" || p.checkLevel === "weak" || p.checkLevel === "ok" ? p.checkLevel : "",
     checkReason: String(p.checkReason == null ? "" : p.checkReason).slice(0, 300),
     matchedName: String(p.matchedName == null ? "" : p.matchedName).slice(0, 200),
     placeId: String(p.placeId == null ? "" : p.placeId).replace(/[^A-Za-z0-9_\-]/g, "").slice(0, 200),
