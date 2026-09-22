@@ -514,7 +514,7 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
 .add-form{display:grid;grid-template-columns:110px 1fr;gap:8px;margin-bottom:10px;}
 
 .spot__links{display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
-.spot__del{border:none;background:none;padding:0;font-size:11.5px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit;}
+.spot__del,.spot__fix{border:none;background:none;padding:0;font-size:11.5px;font-weight:700;color:var(--muted);cursor:pointer;font-family:inherit;}
 .spot__del:active{color:var(--danger);}
 .del-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;padding-top:12px;border-top:1px dashed var(--line);}
 .chip-btn--danger{color:var(--danger);border-color:#F1D3CF;}
@@ -532,6 +532,16 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
 .addr__text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .addr__attr{flex:none;margin-left:auto;padding-left:6px;font-size:9.5px;color:#9C8D84;letter-spacing:.02em;}
 .addr--spot{margin-top:0;}
+
+.cand__now{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:6px;background:#FBEAE0;color:#8A3B12;font-size:10.5px;font-weight:700;vertical-align:1px;}
+.cand-attr{font-size:9.5px;color:#9C8D84;text-align:right;margin:2px 2px 10px;}
+.fix-name{font-size:16px;font-weight:800;margin:0 0 2px;}
+.fix-now{font-size:12px;color:var(--muted);margin:0 0 12px;line-height:1.5;}
+#fixSheet .add-row .input{flex:1;min-width:0;}
+#fixConfirmBtn:disabled{opacity:.45;}
+.btn-text{display:block;width:100%;margin-top:6px;padding:12px 8px;border:none;background:none;font:inherit;font-size:12.5px;font-weight:700;color:var(--muted);cursor:pointer;}
+.warn-box__btn{display:block;margin-top:6px;padding:0;border:none;background:none;font:inherit;font-size:11.5px;font-weight:800;color:#8A3B12;text-decoration:underline;cursor:pointer;}
+.ctl-refind{width:100%;margin-top:10px;}
 
 @media (prefers-reduced-motion:reduce){*{transition:none!important;}}
 </style>
@@ -1151,6 +1161,31 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
     </div>
   </div>
 
+  <!-- ===================== 場所を選び直す ===================== -->
+  <div class="sheet" id="fixSheet" hidden>
+    <div class="sheet__backdrop" data-fix-close></div>
+    <div class="sheet__panel" role="dialog" aria-modal="true" aria-labelledby="fixTitle">
+      <div class="sheet__head">
+        <h2 class="sheet__title" id="fixTitle">場所を選び直す</h2>
+        <button class="sheet__close" type="button" data-fix-close aria-label="閉じる">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#241C19" stroke-width="2.4" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <div class="add-body">
+        <p class="fix-name" id="fixTitleName"></p>
+        <p class="fix-now" id="fixNow"></p>
+        <div class="add-row">
+          <input type="text" id="fixInput" class="input" placeholder="店名（地名を足すと見つけやすい）">
+          <button class="btn-primary btn-primary--sm" type="button" id="fixSearchBtn">探す</button>
+        </div>
+        <div class="status" id="fixStatus"></div>
+        <div class="cands" id="fixResults"></div>
+        <button class="btn-primary" type="button" id="fixConfirmBtn" disabled>このお店にする</button>
+        <button class="btn-text" type="button" id="fixHideBtn">どれでもない・分からない → コースに出さない</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ===================== ヘルプ ===================== -->
   <div class="sheet" id="helpSheet" hidden>
     <div class="sheet__backdrop" data-help-close></div>
@@ -1645,6 +1680,7 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
       var mid = Math.floor(group.length / 2);
       var center = { lat: lats[mid], lng: lngs[mid] };
       group.forEach(function(p){
+        if(p.checkLevel === "ok") return;
         if(haversineKm(center, p) > OUTLIER_KM){
           p.needsCheck = true;
           p.checkLevel = "strong";   // 場所そのものが疑わしい
@@ -1946,7 +1982,7 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
 
       res.forEach(function(r, idx){
         var pin = chunk[idx];
-        if(!pin) return;
+        if(!pin || pin.checkLevel === "ok") return;
         var cands = (r && r.candidates) ? r.candidates
           : (r && typeof r.lat === "number" ? [{ lat:r.lat, lng:r.lng, name:r.matchedName || "" }] : []);
         // エリア外の候補は捨てる
@@ -2213,6 +2249,7 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
       }
 
       flagOutliersByList();
+      flagAmbiguousFromCache();
       var needCheckTotal = state.pins.filter(function(p){ return p.needsCheck; }).length;
       saveLocal();
 
@@ -2381,7 +2418,7 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
     if(coordEdited && patch.placeId === undefined){ p.placeId = ""; p.pidTried = false; }
     if(coordEdited && patch.needsCheck === undefined && p.lat != null && p.lng != null){
       p.needsCheck = false;
-      p.checkLevel = "";
+      p.checkLevel = "ok";
       p.checkReason = "";
     }
     saveLocal();
@@ -2981,6 +3018,7 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
       html += '<div class="spot__walk">' + icon("ic-walk", 12, "#7C6A61", 2.4) +
         (i === 0 ? "現在地から " : (i + "から ")) + tr.label + legMin + '分（' + fmtKm(result.legs[i]) + '）</div>';
       html += '<div class="spot__links">' + mapsLinkHtml(p) +
+        '<button type="button" class="spot__del spot__fix" data-fix="' + escapeHtml(p.id) + '">場所が違う？</button>' +
         '<button type="button" class="spot__del" data-del="' + escapeHtml(p.id) + '">ピンから消す</button></div>';
       html += '</div></div>';
     });
@@ -3182,7 +3220,7 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
       if(p.needsCheck && !editing){
         h += '<div class="warn-box">要確認：' +
           escapeHtml(p.checkReason || ("Googleで見つかったのは「" + (p.matchedName || "") + "」でした")) +
-          '</div>';
+          '<button type="button" class="warn-box__btn" data-fix="' + escapeHtml(p.id) + '">場所を選び直す</button></div>';
       }
 
       h += '<div class="pcard__actions">';
@@ -3217,6 +3255,7 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
           h += '<p class="note note--tight" style="margin-top:6px;font-size:10.5px;">上のリンクでお店を開き、ブラウザのURLをコピーして貼ると座標が入ります。</p>';
         }
         var sameList = p.listName ? state.pins.filter(function(x){ return (x.listName || "") === p.listName; }).length : 0;
+        h += '<button class="btn-outline btn-outline--sm ctl-refind" type="button" data-fix="' + escapeHtml(p.id) + '">場所を選び直す（全国の候補から）</button>';
         h += '<div class="del-row">';
         h += '<button class="chip-btn chip-btn--danger ctl-del" type="button">このピンを消す</button>';
         if(sameList > 1){
@@ -3242,7 +3281,7 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
             input.placeholder = "座標が読み取れないURLです（@35.6…,139.7… を含むもの）";
             return;
           }
-          updatePin(id, { lat: coord.lat, lng: coord.lng, needsCheck: false, matchedName: "" });
+          updatePin(id, { lat: coord.lat, lng: coord.lng, needsCheck: false, checkLevel: "ok", checkReason: "", matchedName: "" });
           renderPinList();
         });
       }
@@ -4279,6 +4318,156 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
     });
   }
 
+  /* ===================== 場所を選び直す =====================
+     Googleマップの書き出し（保存済みのCSV）には座標が入っていないので、店名で探すしかない。
+     同じ名前のお店が別の街にもあると、近い方を掴んでしまうことがある。
+     → ①候補の中に「同じ名前で遠くにある店」があったら、自動で要確認にしてコースから外す（無料・通信なし）
+       ②コースやピン一覧から「場所が違う？」で、全国の候補から選び直せる
+     自分で選んだものは checkLevel:"ok"（確認済み）にして、以後は自動で疑わない。
+  ------------------------------------------------------------ */
+  var fixState = { id: null, cands: [], picked: -1 };
+
+  // ① 検索したときにもらっていた候補（端末に残っている分）だけで判定する
+  var AMBIG_KM = 50;
+  function flagAmbiguousFromCache(){
+    var cache = loadGeoCache();
+    var flagged = 0;
+    state.pins.forEach(function(p){
+      if(p.lat == null || p.lng == null || !p.geoQuery) return;
+      if(p.checkLevel === "ok" || p.checkLevel === "strong") return;
+      var hit = cache[p.geoQuery];
+      if(!hit || !hit.candidates) return;
+      var same = hit.candidates.filter(function(c){ return c && c.lat != null && namesRoughlyMatch(p.name, c.name); });
+      // 4件以上同じ名前＝チェーン店。どの店舗でもよいことが多いので疑わない
+      if(same.length < 2 || same.length > 3) return;
+      var far = same.filter(function(c){ return haversineKm(p, c) > AMBIG_KM; });
+      if(!far.length) return;
+      var farKm = Math.round(Math.max.apply(null, far.map(function(c){ return haversineKm(p, c); })));
+      p.needsCheck = true;
+      p.checkLevel = "strong";
+      p.checkReason = "同じ名前のお店が約" + farKm + "km離れた場所にもあります。どちらか選ぶまでコースには出しません";
+      flagged++;
+    });
+    if(flagged) saveLocal();
+    return flagged;
+  }
+
+  function openFixSheet(id){
+    var p = state.pins.find(function(x){ return x.id === id; });
+    var sheet = document.getElementById("fixSheet");
+    if(!p || !sheet) return;
+    closeHelp();
+    fixState = { id: id, cands: [], picked: -1 };
+    document.getElementById("fixTitleName").textContent = p.name;
+    var now = document.getElementById("fixNow");
+    var cur = getCurrent();
+    var a = p.placeId && addrCache[p.placeId];
+    now.textContent = p.lat == null ? "いまは場所が決まっていません。"
+      : "いまの場所：" + (a ? a + "（" : "") + "出発地から" + fmtKm(haversineKm(cur, p)) + (a ? "）" : "");
+    document.getElementById("fixInput").value = p.name;
+    document.getElementById("fixResults").innerHTML = "";
+    document.getElementById("fixConfirmBtn").disabled = true;
+    setFixStatus("");
+    sheet.hidden = false;
+    searchFix();
+  }
+  function closeFixSheet(){
+    var sheet = document.getElementById("fixSheet");
+    if(sheet) sheet.hidden = true;
+    fixState.id = null;
+  }
+  function setFixStatus(msg, kind){
+    var el = document.getElementById("fixStatus");
+    if(!el) return;
+    el.textContent = msg || "";
+    el.classList.toggle("is-error", kind === "error");
+    el.classList.toggle("is-ok", kind === "ok");
+  }
+
+  async function searchFix(){
+    var p = state.pins.find(function(x){ return x.id === fixState.id; });
+    if(!p) return;
+    var q = document.getElementById("fixInput").value.trim() || p.name;
+    fixState.cands = []; fixState.picked = -1;
+    document.getElementById("fixResults").innerHTML = "";
+    document.getElementById("fixConfirmBtn").disabled = true;
+    setFixStatus("日本全国から「" + q + "」を探しています…");
+    var apiKey = getApiKey();
+    var results = null, err = "";
+    geoCancel = false;
+    try{
+      // 場所のヒントは渡さない＝近所びいきをしないで全国から探す
+      results = apiKey
+        ? await geocodeViaBrowser([q], null, apiKey, { detail: true })
+        : await geocodeViaServer([q], null, { detail: true });
+    }catch(e){ err = (e && e.message) || ""; }
+    if(fixState.id !== p.id) return;   // 途中で閉じた
+    var r = results && results[0];
+    var cands = (r && r.candidates) ? r.candidates.slice(0, 5) : [];
+    if(!cands.length){
+      setFixStatus(results
+        ? "見つかりませんでした。「" + p.name + " 福岡」のように地名を足して、もう一度探してみてください。"
+        : "探せませんでした（APIキーが未設定か、通信の問題）。" + (err ? " " + err : ""), "error");
+      return;
+    }
+    fixState.cands = cands;
+    renderFixCandidates();
+    setFixStatus("候補が" + cands.length + "件あります。住所を見て、行きたいお店を選んでください。見つからないときは地名を足して探し直せます。", "ok");
+  }
+
+  function isSamePlace(p, c){
+    if(p.placeId && c.placeId) return p.placeId === c.placeId;
+    return p.lat != null && c.lat != null && haversineKm(p, c) < 0.1;
+  }
+
+  function renderFixCandidates(){
+    var p = state.pins.find(function(x){ return x.id === fixState.id; });
+    var cur = getCurrent();
+    document.getElementById("fixResults").innerHTML = fixState.cands.map(function(c, i){
+      var here = p && isSamePlace(p, c);
+      return '<button type="button" class="cand' + (i === fixState.picked ? " is-picked" : "") + '" data-fixcand="' + i + '">' +
+        '<span class="cand__name">' + escapeHtml(c.name || "（名前なし）") + (here ? '<span class="cand__now">いまの場所</span>' : "") + '</span>' +
+        (c.address ? '<span class="cand__addr">' + escapeHtml(cleanAddress(c.address)) + '</span>' : "") +
+        (c.lat != null ? '<span class="cand__dist">' + fmtKm(haversineKm(cur, c)) + '</span>' : "") +
+        '</button>';
+    }).join("") + (fixState.cands.length ? '<p class="cand-attr">Google Maps の検索結果</p>' : "");
+  }
+
+  function pickFixCandidate(i){
+    fixState.picked = i;
+    renderFixCandidates();
+    document.getElementById("fixConfirmBtn").disabled = false;
+  }
+
+  function afterFix(msg){
+    saveLocal();
+    renderAll();
+    if(currentScreen() === "course") renderCourseResult();
+    closeFixSheet();
+    toast(msg);
+  }
+
+  function confirmFix(){
+    var p = state.pins.find(function(x){ return x.id === fixState.id; });
+    var c = fixState.cands[fixState.picked];
+    if(!p || !c) return;
+    p.lat = c.lat; p.lng = c.lng;
+    p.placeId = c.placeId || ""; p.pidTried = !!c.placeId;
+    p.matchedName = c.name || "";
+    p.needsCheck = false; p.checkLevel = "ok"; p.checkReason = "";
+    var km = haversineKm(getCurrent(), p);
+    afterFix("「" + p.name + "」の場所を直しました" +
+      (state.radiusKm < 999 && km > state.radiusKm ? "。遠いので、この近くのコースには出ません" : ""));
+  }
+
+  function hideFromCourse(){
+    var p = state.pins.find(function(x){ return x.id === fixState.id; });
+    if(!p) return;
+    p.needsCheck = true; p.checkLevel = "strong";
+    p.checkReason = "場所がはっきりしないので、コースには出しません（「場所を選び直す」で直せます）";
+    afterFix("「" + p.name + "」はコースに出さないようにしました");
+  }
+
   /* ===================== ヘルプ（？を押すと出る説明） =====================
      画面の文字は最小限にして、詳しい話はここに逃がす。 */
   var HELP = {
@@ -4415,6 +4604,19 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
     /* --- お店を1件追加（共有から） --- */
     document.getElementById("addPinBtn").addEventListener("click", function(){ openAddSheet(""); });
     document.getElementById("addSearchBtn").addEventListener("click", searchForAdd);
+    document.getElementById("fixSearchBtn").addEventListener("click", searchFix);
+    document.getElementById("fixInput").addEventListener("keydown", function(e){ if(e.key === "Enter"){ e.preventDefault(); searchFix(); } });
+    document.getElementById("fixResults").addEventListener("click", function(e){
+      var c = e.target.closest("[data-fixcand]");
+      if(c) pickFixCandidate(Number(c.getAttribute("data-fixcand")));
+    });
+    document.getElementById("fixConfirmBtn").addEventListener("click", confirmFix);
+    document.getElementById("fixHideBtn").addEventListener("click", hideFromCourse);
+    document.querySelectorAll("[data-fix-close]").forEach(function(el){ el.addEventListener("click", closeFixSheet); });
+    document.getElementById("pinList").addEventListener("click", function(e){
+      var f = e.target.closest("[data-fix]");
+      if(f) openFixSheet(f.getAttribute("data-fix"));
+    });
     document.getElementById("addPasteBtn").addEventListener("click", pasteForAdd);
     document.getElementById("addConfirmBtn").addEventListener("click", confirmAdd);
     document.getElementById("addResults").addEventListener("click", function(e){
@@ -4502,6 +4704,8 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
     });
     document.getElementById("rebuildBtn").addEventListener("click", renderCourseResult);
     document.getElementById("courseResult").addEventListener("click", function(e){
+      var f = e.target.closest("[data-fix]");
+      if(f){ openFixSheet(f.getAttribute("data-fix")); return; }
       var b = e.target.closest("[data-del]");
       if(b) confirmDeleteOne(b.getAttribute("data-del"));
     });
@@ -4744,6 +4948,7 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
     if(isPaired()){ syncNow(true); startSyncLoop(); }
     handleJoinLink();
     handleIncomingShare();
+    if(flagAmbiguousFromCache()) renderAll();
     setTimeout(backfillPlaceIds, 4000);
     window.addEventListener("hashchange", function(){ handleJoinLink(); handleIncomingShare(); });
   }
