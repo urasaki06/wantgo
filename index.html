@@ -527,6 +527,12 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
 .undo-bar__text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
 .undo-bar__btn{flex:none;border:none;border-radius:999px;background:#fff;color:var(--accent-ink);font-weight:700;font-size:12.5px;padding:7px 14px;cursor:pointer;font-family:inherit;}
 
+.addr{display:flex;align-items:baseline;gap:4px;font-size:12px;color:var(--muted);line-height:1.5;margin-top:3px;min-width:0;}
+.addr svg{flex:none;position:relative;top:1px;}
+.addr__text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.addr__attr{flex:none;margin-left:auto;padding-left:6px;font-size:9.5px;color:#9C8D84;letter-spacing:.02em;}
+.addr--spot{margin-top:0;}
+
 @media (prefers-reduced-motion:reduce){*{transition:none!important;}}
 </style>
 </head>
@@ -1167,12 +1173,12 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
 
   /* ---------------- icon helpers ---------------- */
   function mapsUrlFor(p){
-    // 1) coordinates if we have them, 2) the original Google Maps URL from the export,
-    // 3) a plain name search — so every pin gets a working link even without lat/lng.
+    // お店のページ（ピンが立つ画面）を開きたいので、場所ID → 元のGoogleマップのリンク → 座標 → 名前 の順。
+    if(p.placeId) return placeUrl(p);
+    if(p.url && /^https?:\/\//i.test(p.url)) return p.url;
     if(p.lat != null && p.lng != null){
       return "https://www.google.com/maps/search/?api=1&query=" + p.lat + "," + p.lng;
     }
-    if(p.url && /^https?:\/\//i.test(p.url)) return p.url;
     if(p.name) return "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(p.name);
     return "";
   }
@@ -1680,6 +1686,7 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
       lat: best.cand.lat,
       lng: best.cand.lng,
       matchedName: best.cand.name,
+      placeId: best.cand.placeId || "",
       // 名前が全く一致しない、または中心から100km以上離れているなら自信なし
       confident: best.nameScore >= 2 && (best.distKm == null || best.distKm <= 100),
       distKm: best.distKm,
@@ -1756,7 +1763,7 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
         try{
           var request = {
             textQuery: q,
-            fields: detail ? ["displayName", "location", "formattedAddress", "id"] : ["displayName", "location"],
+            fields: detail ? ["displayName", "location", "formattedAddress", "id"] : ["displayName", "location", "id"],
             language: "ja",
             region: "jp",
             // 1件目を鵜呑みにせず候補を複数もらう。料金はリクエスト単位なので候補数は費用に影響しない。
@@ -1784,10 +1791,8 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
               lng: lng,
               name: (dn && typeof dn === "object" && dn.text) ? dn.text : (dn || "")
             };
-            if(detail){
-              cand.address = place.formattedAddress || "";
-              cand.placeId = place.id || "";
-            }
+            if(place.id) cand.placeId = place.id;
+            if(detail) cand.address = place.formattedAddress || "";
             return cand;
           }).filter(Boolean);
 
@@ -1954,7 +1959,7 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
         }
         var picked = pickBestCandidate(pin.name, inArea, center);
         if(picked){
-          pin.lat = picked.lat;
+          pin.lat = picked.lat; pin.placeId = picked.placeId || ""; pin.pidTried = false;
           pin.lng = picked.lng;
           pin.matchedName = picked.matchedName;
           pin.needsCheck = !picked.confident;
@@ -2047,7 +2052,7 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
       }
 
       if(picked){
-        pin.lat = picked.lat;
+        pin.lat = picked.lat; pin.placeId = picked.placeId || ""; pin.pidTried = false;
         pin.lng = picked.lng;
         pin.matchedName = picked.matchedName || "";
         pin.needsCheck = !picked.confident;
@@ -2156,7 +2161,7 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
           if(!center || !hit || !hit.candidates) return;
           var picked = pickBestCandidate(pin.name, hit.candidates, center);
           if(picked && picked.confident){
-            pin.lat = picked.lat; pin.lng = picked.lng;
+            pin.lat = picked.lat; pin.placeId = picked.placeId || ""; pin.pidTried = false; pin.lng = picked.lng;
             pin.matchedName = picked.matchedName;
             pin.needsCheck = false; pin.checkLevel = ""; pin.checkReason = "";
             improved++;
@@ -2194,7 +2199,7 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
               if(r && r.candidates && r.candidates.length){
                 var picked = pickBestCandidate(pin.name, r.candidates, listCenterFor(pin.listName));
                 if(picked && picked.confident){
-                  pin.lat = picked.lat; pin.lng = picked.lng;
+                  pin.lat = picked.lat; pin.placeId = picked.placeId || ""; pin.pidTried = false; pin.lng = picked.lng;
                   pin.matchedName = picked.matchedName;
                   pin.needsCheck = false; pin.checkLevel = ""; pin.checkReason = "";
                   improved++;
@@ -2234,6 +2239,7 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
     }
 
     geoRunning = false;
+    setTimeout(backfillPlaceIds, 500);
     document.getElementById("geocodeBtn").disabled = false;
     document.getElementById("geocodeStopBtn").hidden = true;
     updateGeocodeBox();
@@ -2372,6 +2378,7 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
     // 自分で緯度経度を直したのなら、それが正解。「要確認」の印は外す。
     var coordEdited = (patch.lat !== undefined || patch.lng !== undefined);
     Object.assign(p, patch);
+    if(coordEdited && patch.placeId === undefined){ p.placeId = ""; p.pidTried = false; }
     if(coordEdited && patch.needsCheck === undefined && p.lat != null && p.lng != null){
       p.needsCheck = false;
       p.checkLevel = "";
@@ -2422,6 +2429,7 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
     return Number(lat).toFixed(6) + "," + Number(lng).toFixed(6);
   }
   function mapsShareUrlFor(p){
+    if(p.placeId) return placeUrl(p);
     if(p.url && /^https?:\/\//i.test(p.url)) return p.url;
     if(p.lat != null && p.lng != null){
       return "https://www.google.com/maps/search/?api=1&query=" + coordStr(p.lat, p.lng);
@@ -2443,6 +2451,11 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
       "&destination=" + encodeURIComponent(coordStr(dest.lat, dest.lng)) +
       "&travelmode=" + ((typeof TRANSPORT !== "undefined" && TRANSPORT[state.transport]) ? TRANSPORT[state.transport].mode : "walking");
     if(mid.length) url += "&waypoints=" + encodeURIComponent(mid.join("|"));
+    if(dest.placeId) url += "&destination_place_id=" + encodeURIComponent(dest.placeId);
+    var midStops = stops.slice(0, -1);
+    if(midStops.length && midStops.every(function(p){ return p.placeId; })){
+      url += "&waypoint_place_ids=" + encodeURIComponent(midStops.map(function(p){ return p.placeId; }).join("|"));
+    }
     return url;
   }
 
@@ -2452,6 +2465,7 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
     lines.push("");
     schedule.rows.forEach(function(r, i){
       lines.push((i+1) + ". " + fmtHM(r.arrive) + " " + r.pin.name + "（" + CAT_LABEL[r.pin.cat] + "）");
+      if(r.pin.placeId && addrCache[r.pin.placeId]) lines.push(addrCache[r.pin.placeId]);
       lines.push(mapsShareUrlFor(r.pin));
       lines.push("");
     });
@@ -2960,6 +2974,7 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
       html += '<div class="spot__body">';
       html += '<div class="spot__head"><span class="spot__name">' + escapeHtml(p.name) + '</span>' +
         '<span class="spot__price">' + fmtYen(estBudget) + '</span></div>';
+      html += addressHtml(p, "addr--spot");
       html += '<div class="spot__tags">' + catTagHtml(p.cat) +
         '<span class="spot__walk">滞在' + STAY_MIN + '分</span></div>';
       if(p.note) html += '<div class="spot__memo">' + escapeHtml(p.note) + '</div>';
@@ -2979,6 +2994,7 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
 
     wrap.innerHTML = html;
     renderMap(document.getElementById("courseMap"), result.picked, result.current, { route:true, order: result.picked });
+    observeAddresses(wrap);
     var d = document.getElementById("shareDate");
     if(d) d.value = todayInputValue(nextSaturday());
     var routeBtn = document.getElementById("routeBtn");
@@ -3007,7 +3023,14 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
     }).join("");
   }
 
+  // 描き直しの途中で、消える入力欄の「変更」がもう一度描き直しを呼ぶことがある。二重に走らせない。
+  var renderingPins = false;
   function renderPinList(){
+    if(renderingPins) return;
+    renderingPins = true;
+    try{ renderPinListInner(); } finally { renderingPins = false; }
+  }
+  function renderPinListInner(){
     var listEl = document.getElementById("pinList");
     if(!listEl) return;
     var current = getCurrent();
@@ -3128,6 +3151,7 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
       }
       h += '<div class="pcard__head">';
       h += '<div class="pcard__name">' + escapeHtml(p.name) + '</div>';
+      h += addressHtml(p, "addr--card");
       if(!p.photo){
         h += '<div class="pcard__tags">' + catTagHtml(p.cat);
         if(noCoord) h += '<span class="tag tag--alert">座標なし</span>';
@@ -3205,6 +3229,7 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
       return h;
     }).join("");
 
+    observeAddresses(listEl);
     listEl.querySelectorAll(".pcard").forEach(function(card){
       var id = card.dataset.id;
       var fixBtn = card.querySelector(".ctl-fixbtn");
@@ -4084,6 +4109,176 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
     undoTimer = setTimeout(function(){ el.hidden = true; lastDeleted = null; }, 6000);
   }
 
+  /* ===================== お店のページと住所 =====================
+     Googleの規約：
+       ・場所ID（place ID）は、ずっと保存してよい
+       ・住所などそれ以外の情報は、保存せず、表示するときに取りに行く
+     なので、場所IDだけをピンに持たせ、住所はアプリを開いている間だけ覚えておく。
+     料金：
+       ・場所IDだけを探す検索（Text Search IDs Only）は無料
+       ・住所の取得（Place Details Essentials）は月1万件まで無料
+  ------------------------------------------------------------ */
+  var addrCache = {};      // placeId -> 住所（アプリを閉じたら消える）
+  var addrPending = {};
+  var pidRunning = false;
+
+  function placeUrl(p){
+    return "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(p.name || "") +
+      "&query_place_id=" + encodeURIComponent(p.placeId);
+  }
+
+  function isAuthError(e){
+    return /PERMISSION|API key|ApiKey|RefererNotAllowed|REQUEST_DENIED|ApiNotActivated|BillingNotEnabled|not authorized/i
+      .test(String((e && e.message) || e || ""));
+  }
+
+  // 座標はあるのに場所IDがないピンに、場所IDを付ける（無料の検索だけを使う）。
+  // その座標のすぐ近く（約400m四方）に絞って店名で探すので、遠くの同名店は拾わない。
+  async function backfillPlaceIds(){
+    if(pidRunning) return 0;
+    var key = getApiKey();
+    if(!key) return 0;
+    var todo = state.pins.filter(function(p){
+      return !p.placeId && !p.pidTried && p.lat != null && p.lng != null && String(p.name || "").trim();
+    });
+    if(!todo.length) return 0;
+    pidRunning = true;
+    var changed = 0;
+    var stop = false;
+    try{
+      await loadMapsLibrary(key);
+      var Place = (await google.maps.importLibrary("places")).Place;
+      var cursor = 0;
+      var worker = async function(){
+        while(cursor < todo.length && !stop){
+          if(document.visibilityState === "hidden"){ stop = true; return; }
+          var p = todo[cursor++];
+          var d = 0.004;
+          try{
+            var out = await Place.searchByText({
+              textQuery: String(p.name).trim(),
+              fields: ["id"],
+              language: "ja",
+              region: "jp",
+              maxResultCount: 1,
+              locationRestriction: { north: p.lat + d, south: p.lat - d, east: p.lng + d, west: p.lng - d }
+            });
+            var hit = out && out.places && out.places[0];
+            if(hit && hit.id){ p.placeId = hit.id; changed++; }
+            p.pidTried = true;
+          }catch(e){
+            if(isAuthError(e)){ stop = true; return; }   // キーの問題なら、印を付けずにやめる（あとでまた試す）
+            p.pidTried = true;
+          }
+          if(changed && changed % 50 === 0) saveLocalOnly();
+        }
+      };
+      await Promise.all([worker(), worker(), worker()]);
+    }catch(e){
+      /* 読み込みに失敗したら、また次の機会に */
+    }
+    pidRunning = false;
+    saveLocal();
+    if(changed) renderAll();
+    return changed;
+  }
+
+  function cleanAddress(s){
+    return String(s || "").replace(/^日本、?\s*/, "").replace(/^〒\d{3}-?\d{4}\s*/, "").trim();
+  }
+
+  async function fetchAddresses(ids){
+    ids = ids.filter(function(id){ return id && !(id in addrCache) && !addrPending[id]; });
+    if(!ids.length) return;
+    ids.forEach(function(id){ addrPending[id] = true; });
+    var key = getApiKey();
+    try{
+      if(key){
+        await loadMapsLibrary(key);
+        var Place = (await google.maps.importLibrary("places")).Place;
+        await Promise.all(ids.map(async function(id){
+          try{
+            var pl = new Place({ id: id, requestedLanguage: "ja" });
+            await pl.fetchFields({ fields: ["shortFormattedAddress", "formattedAddress"] });
+            addrCache[id] = cleanAddress(pl.shortFormattedAddress || pl.formattedAddress || "");
+          }catch(e){ addrCache[id] = ""; }
+        }));
+      } else {
+        // APIキーのないスマホは、サーバーにキーが置いてあればそちらで（なければ何も出さない）
+        var res = await fetch("/api/geocode", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ details: ids })
+        });
+        var data = res.ok ? await res.json() : null;
+        ids.forEach(function(id){
+          addrCache[id] = cleanAddress((data && data.addresses && data.addresses[id]) || "");
+        });
+      }
+    }catch(e){
+      ids.forEach(function(id){ if(!(id in addrCache)) addrCache[id] = ""; });
+    }
+    ids.forEach(function(id){ delete addrPending[id]; });
+    paintAddresses(document);
+  }
+
+  function addressHtml(p, cls){
+    if(!p.placeId) return "";
+    var a = addrCache[p.placeId] || "";
+    return '<div class="addr ' + cls + '" data-addr="' + escapeHtml(p.placeId) + '"' + (a ? "" : " hidden") + '>' +
+      icon("ic-pin", 12, "currentColor", 2.1) +
+      '<span class="addr__text">' + escapeHtml(a) + '</span>' +
+      '<span class="addr__attr">Google Maps</span></div>';
+  }
+
+  function paintAddresses(root){
+    (root || document).querySelectorAll("[data-addr]").forEach(function(el){
+      var a = addrCache[el.getAttribute("data-addr")];
+      if(a){
+        el.querySelector(".addr__text").textContent = a;
+        el.hidden = false;
+      }
+    });
+  }
+
+  // 画面に見えているカードの分だけ住所を取りに行く（無料枠を無駄にしない）
+  var addrObserver = null;
+  var addrBatch = [];
+  var addrBatchTimer = null;
+  function queueAddress(id){
+    addrBatch.push(id);
+    clearTimeout(addrBatchTimer);
+    addrBatchTimer = setTimeout(function(){
+      var ids = addrBatch.splice(0, addrBatch.length);
+      fetchAddresses(ids);
+    }, 120);
+  }
+  function observeAddresses(root){
+    if(!root) return;
+    if(!addrObserver && "IntersectionObserver" in window){
+      addrObserver = new IntersectionObserver(function(entries){
+        entries.forEach(function(en){
+          if(!en.isIntersecting) return;
+          addrObserver.unobserve(en.target);
+          var id = en.target.getAttribute("data-addr-watch");
+          if(id) queueAddress(id);
+        });
+      }, { rootMargin: "240px 0px" });
+    }
+    root.querySelectorAll("[data-addr]").forEach(function(el){
+      var id = el.getAttribute("data-addr");
+      if(id in addrCache){ paintAddresses(el.parentNode); return; }
+      // 住所の行はまだ隠れていて大きさがないので、カード全体が見えたら取りに行く
+      var target = el.closest(".pcard, .spot") || el.parentNode;
+      if(addrObserver && target){
+        target.setAttribute("data-addr-watch", id);
+        addrObserver.observe(target);
+      } else {
+        queueAddress(id);
+      }
+    });
+  }
+
   /* ===================== ヘルプ（？を押すと出る説明） =====================
      画面の文字は最小限にして、詳しい話はここに逃がす。 */
   var HELP = {
@@ -4254,7 +4449,7 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
     document.getElementById("calloutPairBtn").addEventListener("click", function(){ go("pair"); });
     document.getElementById("syncChip").addEventListener("click", function(){ go("pair"); });
     document.addEventListener("visibilitychange", function(){
-      if(document.visibilityState === "visible") syncNow(true);
+      if(document.visibilityState === "visible"){ syncNow(true); setTimeout(backfillPlaceIds, 3000); }
     });
 
     /* --- ？の説明ポップアップ --- */
@@ -4549,6 +4744,7 @@ details.disclosure[open] > summary::before{content:"⌄ ";}
     if(isPaired()){ syncNow(true); startSyncLoop(); }
     handleJoinLink();
     handleIncomingShare();
+    setTimeout(backfillPlaceIds, 4000);
     window.addEventListener("hashchange", function(){ handleJoinLink(); handleIncomingShare(); });
   }
 
