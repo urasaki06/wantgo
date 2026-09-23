@@ -102,6 +102,7 @@ function cleanPin(p) {
     matchedName: String(p.matchedName == null ? "" : p.matchedName).slice(0, 200),
     placeId: String(p.placeId == null ? "" : p.placeId).replace(/[^A-Za-z0-9_\-]/g, "").slice(0, 200),
     photoV: String(p.photoV == null ? "" : p.photoV).slice(0, 32),
+    kind: /^[a-z]{1,12}$/.test(p.kind || "") ? p.kind : "",
   };
 }
 
